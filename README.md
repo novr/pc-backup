@@ -45,6 +45,11 @@ chmod +x scripts/*.sh
 ./scripts/install-launch-agent.sh
 ```
 
+OneDrive / iCloud 等の Files On-Demand 先では、`mirror/`（少なくともその親）を
+「このデバイスに常に保持」にする。dataless のままだと rsync / secrets 更新が
+`Operation not permitted` で失敗する。LaunchAgent 実行時は `/bin/bash` に
+フルディスクアクセスが必要な場合もある。
+
 ## 手動実行
 
 ```bash

@@ -178,8 +178,12 @@ backup_secrets_bundle() {
       --passphrase-fd 0 \
       --symmetric --cipher-algo AES256 \
       --output "${tmp_gpg}" "${bundle_path}"
-    mv -f "${tmp_gpg}" "${latest_path}"
-    rm -f "${plaintext_latest}"
+    # OneDrive dataless: mv onto existing file often returns EPERM; cp replaces reliably.
+    if ! cp -f "${tmp_gpg}" "${latest_path}"; then
+      rm -rf "${SECRETS_STAGING}"
+      die "failed to write ${latest_path} (OneDrive lock/dataless?). Pin mirror/ as Always Keep on this device."
+    fi
+    rm -f "${tmp_gpg}" "${plaintext_latest}"
     log "Encrypted secrets -> mirror/encrypted/secrets-latest.tar.gpg"
   else
     if [[ "${PC_BACKUP_ALLOW_PLAINTEXT_SECRETS}" != "1" ]]; then

@@ -24,8 +24,16 @@ BREW_DIR="${1:-${PC_BACKUP_ROOT}/mirror/brew}"
 BREWFILE="${BREW_DIR}/Brewfile"
 mkdir -p "${BREW_DIR}"
 
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pc-backup-brew.XXXXXX")"
+cleanup_tmp() { rm -rf "${TMP_DIR}"; }
+trap cleanup_tmp EXIT
+
+TMP_BREWFILE="${TMP_DIR}/Brewfile"
+TMP_LEAVES="${TMP_DIR}/brew-leaves.txt"
+TMP_CASKS="${TMP_DIR}/brew-casks.txt"
+
 echo "Updating ${BREWFILE}"
-if brew bundle dump --force --file="${BREWFILE}"; then
+if brew bundle dump --force --file="${TMP_BREWFILE}"; then
   echo "brew bundle dump succeeded"
 else
   echo "brew bundle dump failed; generating Brewfile from brew leaves/casks" >&2
@@ -33,10 +41,14 @@ else
     echo "# Generated fallback $(date +%Y-%m-%d) — brew bundle dump unavailable"
     brew leaves | while read -r pkg; do echo "brew \"${pkg}\""; done
     brew list --cask | while read -r pkg; do echo "cask \"${pkg}\""; done
-  } > "${BREWFILE}"
+  } > "${TMP_BREWFILE}"
 fi
 
-brew leaves > "${BREW_DIR}/brew-leaves.txt"
-brew list --cask > "${BREW_DIR}/brew-casks.txt"
+brew leaves > "${TMP_LEAVES}"
+brew list --cask > "${TMP_CASKS}"
+
+cp -f "${TMP_BREWFILE}" "${BREWFILE}"
+cp -f "${TMP_LEAVES}" "${BREW_DIR}/brew-leaves.txt"
+cp -f "${TMP_CASKS}" "${BREW_DIR}/brew-casks.txt"
 
 echo "Done. $(wc -l < "${BREWFILE}") lines in Brewfile -> ${BREW_DIR}"
