@@ -27,6 +27,10 @@ pc-backup/
     encrypted/secrets-latest.tar.gpg
   logs/
   changes/
+  tool/                    # 復元用キット（毎回・実効設定を生成）
+    backup.conf.local      # バックアップ時点の実効値（example 不要）
+    gpg-pass               # mode 600。フォルダ取得者は復号可能
+    scripts/
 ```
 
 対象パスは `PC_BACKUP_DIRS` / `FILES` / `SECRETS`（`backup.conf.example`）。
@@ -61,13 +65,18 @@ PC_BACKUP_DRY_RUN=1 ./scripts/backup.sh
 ## 復元
 
 conf のパス一覧に従い、ミラーから `$HOME` へ戻す。
+リポジトリが無いマシンでは `tool/` から実行する。
 
 ```bash
+# リポジトリから
 ./scripts/restore.sh --dry-run          # 確認のみ
 ./scripts/restore.sh                    # 対話確認あり
 ./scripts/restore.sh --yes              # 確認スキップ
 ./scripts/restore.sh --yes --brew       # Homebrew も bundle
 ./scripts/restore.sh --yes --no-secrets # 平文ミラーのみ
+
+# バックアップ先のキットから（新マシンなど）
+<PC_BACKUP_ROOT>/tool/scripts/restore.sh --yes --brew
 ```
 
 再認証（gh / SSO / MCP 等）と Cursor User Rules（Settings）はファイルでは復元できない。
