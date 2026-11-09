@@ -33,15 +33,15 @@ pc-backup/
     scripts/
 ```
 
-対象パスは `PC_BACKUP_DIRS` / `FILES` / `SECRETS`（`backup.conf.example`）。
-`.local` で同じ配列を定義すれば上書きできる。
+対象パスは `backup.conf.local` の `PC_BACKUP_DIRS` / `FILES` / `SECRETS` / `DIR_EXCLUDES`。
+`backup.conf.example` の配列は空。`.local` で定義する。
 
 ## セットアップ
 
 ```bash
 cd ~/Developer/my/pc-backup
 cp backup.conf.example backup.conf.local
-# PC_BACKUP_ROOT と PC_BACKUP_GPG_PASS を設定
+# PC_BACKUP_ROOT、パス配列、PC_BACKUP_GPG_PASS を設定
 security add-generic-password -a pc-backup -s pc-backup-gpg -w 'your-passphrase' -U
 
 chmod +x scripts/*.sh

@@ -48,6 +48,9 @@ if ((${#PC_BACKUP_DIRS[@]} == 0)) || ((${#PC_BACKUP_FILES[@]} == 0)); then
   echo "ERROR: PC_BACKUP_DIRS / FILES must be set (see backup.conf.example)." >&2
   exit 1
 fi
+if ! declare -p PC_BACKUP_DIR_EXCLUDES >/dev/null 2>&1; then
+  PC_BACKUP_DIR_EXCLUDES=()
+fi
 
 # Keep in sync with backup.sh
 mirror_dest_file() {
@@ -112,9 +115,22 @@ restore_dir() {
     return 0
   fi
   mkdir -p "${dest}"
+  local -a excludes=()
+  local ex
+  if ((${#PC_BACKUP_DIR_EXCLUDES[@]} > 0)); then
+    for ex in "${PC_BACKUP_DIR_EXCLUDES[@]}"; do
+      if [[ "${ex}" == "${rel}/"* ]]; then
+        excludes+=(--exclude="${ex#"${rel}/"}")
+      fi
+    done
+  fi
   log "rsync: mirror/$(mirror_dest_dir "${rel}")/ -> ~/${rel}/"
   local rc=0
-  rsync "${RSYNC_OPTS[@]}" "${src}/" "${dest}/" || rc=$?
+  if ((${#excludes[@]})); then
+    rsync "${RSYNC_OPTS[@]}" "${excludes[@]}" "${src}/" "${dest}/" || rc=$?
+  else
+    rsync "${RSYNC_OPTS[@]}" "${src}/" "${dest}/" || rc=$?
+  fi
   if [[ "${rc}" -ne 0 ]]; then
     log "WARN: rsync exit ${rc} for ${rel}/"
     RSYNC_FAILURES=$((RSYNC_FAILURES + 1))

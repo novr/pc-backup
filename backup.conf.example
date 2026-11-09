@@ -11,37 +11,11 @@ PC_BACKUP_ROOT=""
 #   file without /  -> mirror/dotfiles/<name>   (.zshrc)
 #   otherwise       -> strip one leading '.'   (.config -> config, .a/b -> a/b)
 #
-# Prefer whole trees (.config) over listing each tool subdir.
-# Note: .config may include caches/credentials from various apps.
-PC_BACKUP_DIRS=(
-  .cursor/skills
-  .cursor/rules
-  .cursor/commands
-  .agents
-  .config
-)
-
-PC_BACKUP_FILES=(
-  .zshrc
-  .zshenv
-  .bash_profile
-  .bashrc
-  .gitconfig
-  .cursor/cli-config.json
-  .cursor/argv.json
-  .claude/settings.json
-  .claude/settings.local.json
-  .claude/CLAUDE.md
-)
-
-PC_BACKUP_SECRETS=(
-  .ssh
-  .gnupg
-  .cursor/mcp.json
-  .mcp-auth
-  .npmrc
-  .zshrc.local
-)
+# Home-relative paths. Set the arrays in backup.conf.local.
+PC_BACKUP_DIR_EXCLUDES=()
+PC_BACKUP_DIRS=()
+PC_BACKUP_FILES=()
+PC_BACKUP_SECRETS=()
 
 PC_BACKUP_ENCRYPT_SECRETS=1
 # PC_BACKUP_ALLOW_PLAINTEXT_SECRETS=0
