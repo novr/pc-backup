@@ -67,7 +67,23 @@ mirror_dest_dir() {
   printf '%s\n' "${rel#.}"
 }
 
-MIRROR="${PC_BACKUP_ROOT}/mirror"
+# Latest complete snapshot. Legacy in-place mirror/ is the fallback.
+resolve_mirror() {
+  local root="$1" snaps="${1}/snapshots" d latest=""
+  if [[ -d "${snaps}" ]]; then
+    while IFS= read -r d; do
+      [[ -f "${d}/.complete" ]] && latest="${d}"
+    done < <(find "${snaps}" -mindepth 1 -maxdepth 1 -type d -name '20*' | sort)
+  fi
+  if [[ -n "${latest}" ]]; then
+    printf '%s\n' "${latest}"
+  else
+    echo "WARN: no complete snapshot; falling back to legacy ${root}/mirror (may be stale)" >&2
+    printf '%s\n' "${root}/mirror"
+  fi
+}
+
+MIRROR="$(resolve_mirror "${PC_BACKUP_ROOT}")"
 if [[ ! -d "${MIRROR}" ]]; then
   echo "ERROR: mirror not found: ${MIRROR}" >&2
   exit 1
@@ -90,8 +106,8 @@ require_cmd() {
 
 restore_file() {
   local rel="$1"
-  local src="${MIRROR}/$(mirror_dest_file "${rel}")"
-  local dest="${HOME}/${rel}"
+  local src dest="${HOME}/${rel}"
+  src="${MIRROR}/$(mirror_dest_file "${rel}")"
   if [[ ! -e "${src}" ]]; then
     log "SKIP (missing in mirror): ${rel}"
     return 0
@@ -108,8 +124,8 @@ restore_file() {
 
 restore_dir() {
   local rel="$1"
-  local src="${MIRROR}/$(mirror_dest_dir "${rel}")"
-  local dest="${HOME}/${rel}"
+  local src dest="${HOME}/${rel}"
+  src="${MIRROR}/$(mirror_dest_dir "${rel}")"
   if [[ ! -d "${src}" ]]; then
     log "SKIP (missing dir in mirror): ${rel}"
     return 0

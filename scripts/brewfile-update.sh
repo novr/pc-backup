@@ -2,6 +2,9 @@
 # Dump Homebrew inventory into the backup mirror (not the tool repo).
 set -euo pipefail
 
+export HOMEBREW_NO_AUTO_UPDATE=1
+export HOMEBREW_NO_ENV_HINTS=1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
@@ -33,15 +36,25 @@ TMP_LEAVES="${TMP_DIR}/brew-leaves.txt"
 TMP_CASKS="${TMP_DIR}/brew-casks.txt"
 
 echo "Updating ${BREWFILE}"
-if brew bundle dump --force --file="${TMP_BREWFILE}"; then
+set +e
+brew bundle dump --force --file="${TMP_BREWFILE}"
+dump_rc=$?
+set -e
+if [[ "${dump_rc}" -eq 0 ]]; then
   echo "brew bundle dump succeeded"
 else
-  echo "brew bundle dump failed; generating Brewfile from brew leaves/casks" >&2
+  echo "brew bundle dump failed (${dump_rc}); generating Brewfile from brew leaves/casks" >&2
+  set +e
   {
     echo "# Generated fallback $(date +%Y-%m-%d) — brew bundle dump unavailable"
-    brew leaves | while read -r pkg; do echo "brew \"${pkg}\""; done
-    brew list --cask | while read -r pkg; do echo "cask \"${pkg}\""; done
+    while read -r pkg; do
+      [[ -n "${pkg}" ]] && echo "brew \"${pkg}\""
+    done < <(brew leaves || true)
+    while read -r pkg; do
+      [[ -n "${pkg}" ]] && echo "cask \"${pkg}\""
+    done < <(brew list --cask || true)
   } > "${TMP_BREWFILE}"
+  set -e
 fi
 
 brew leaves > "${TMP_LEAVES}"

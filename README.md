@@ -21,17 +21,22 @@ pc-backup/
 
 ```
 <PC_BACKUP_ROOT>/
-  mirror/
+  snapshots/<YYYYmmdd-HHMMSS>/   # 毎回新規。LaunchAgent は既存 inode を更新できない
+    .complete
     brew/Brewfile
     ...
     encrypted/secrets-latest.tar.gpg
+    tool/                    # 復元用キット（その回の実効設定）
+      backup.conf.local
+      gpg-pass               # mode 600。フォルダ取得者は復号可能
+      scripts/
   logs/
   changes/
-  tool/                    # 復元用キット（毎回・実効設定を生成）
-    backup.conf.local      # バックアップ時点の実効値（example 不要）
-    gpg-pass               # mode 600。フォルダ取得者は復号可能
-    scripts/
 ```
+
+差分の実体は `~/Library/Application Support/pc-backup/mirror`（ローカル）。
+OneDrive へはスナップショットを新規ディレクトリとしてコピーする。14日より古いものは削除する。
+`snapshots/` が無いときは復元は従来の `mirror/` を見る。
 
 対象パスは `backup.conf.local` の `PC_BACKUP_DIRS` / `FILES` / `SECRETS` / `DIR_EXCLUDES`。
 `backup.conf.example` の配列は空。`.local` で定義する。
@@ -49,10 +54,8 @@ chmod +x scripts/*.sh
 ./scripts/install-launch-agent.sh
 ```
 
-OneDrive / iCloud 等の Files On-Demand 先では、`mirror/`（少なくともその親）を
-「このデバイスに常に保持」にする。dataless のままだと rsync / secrets 更新が
-`Operation not permitted` で失敗する。LaunchAgent 実行時は `/bin/bash` に
-フルディスクアクセスが必要な場合もある。
+LaunchAgent から OneDrive 上の既存ファイルを開くと `Operation not permitted` になる。
+バックアップは既存ツリーを上書きせず、`snapshots/<timestamp>/` を新規作成する。
 
 ## 手動実行
 
@@ -76,7 +79,7 @@ conf のパス一覧に従い、ミラーから `$HOME` へ戻す。
 ./scripts/restore.sh --yes --no-secrets # 平文ミラーのみ
 
 # バックアップ先のキットから（新マシンなど）
-<PC_BACKUP_ROOT>/tool/scripts/restore.sh --yes --brew
+<PC_BACKUP_ROOT>/snapshots/<latest>/tool/scripts/restore.sh --yes --brew
 ```
 
 再認証（gh / SSO / MCP 等）と Cursor User Rules（Settings）はファイルでは復元できない。

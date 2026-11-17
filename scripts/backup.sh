@@ -5,10 +5,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+ENV_DRY_RUN="${PC_BACKUP_DRY_RUN-}"
 # shellcheck source=/dev/null
 [[ -f "${PROJECT_ROOT}/backup.conf.example" ]] && source "${PROJECT_ROOT}/backup.conf.example"
 # shellcheck source=/dev/null
 [[ -f "${PROJECT_ROOT}/backup.conf.local" ]] && source "${PROJECT_ROOT}/backup.conf.local"
+[[ -n "${ENV_DRY_RUN}" ]] && PC_BACKUP_DRY_RUN="${ENV_DRY_RUN}"
 
 : "${PC_BACKUP_ENCRYPT_SECRETS:=1}"
 : "${PC_BACKUP_ALLOW_PLAINTEXT_SECRETS:=0}"
@@ -46,13 +48,16 @@ mirror_dest_dir() {
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 DATE_TAG="$(date +%Y%m%d)"
 BACKUP_ROOT="${PC_BACKUP_ROOT}"
-MIRROR="${BACKUP_ROOT}/mirror"
+# Launchd cannot open existing OneDrive / File Provider inodes (EPERM, com.apple.macl).
+# Differential state stays on local disk; each run publishes a new snapshot directory.
+LOCAL_MIRROR="${HOME}/Library/Application Support/pc-backup/mirror"
+MIRROR="${LOCAL_MIRROR}"
 LOG_DIR="${BACKUP_ROOT}/logs"
 CHANGES_DIR="${BACKUP_ROOT}/changes"
 META_DIR="${MIRROR}/meta"
-SECRETS_STAGING="${BACKUP_ROOT}/.staging-secrets-${TIMESTAMP}"
 LOG_FILE="${LOG_DIR}/${TIMESTAMP}.log"
 RSYNC_FAILURES=0
+WORK_TMP=""
 
 RSYNC_OPTS=(-a --human-readable --itemize-changes)
 [[ "${PC_BACKUP_DRY_RUN}" == "1" ]] && RSYNC_OPTS+=(--dry-run)
@@ -95,7 +100,7 @@ rsync_path() {
     return 0
   fi
   mkdir -p "$(dirname "${dest}")"
-  local change_file="${CHANGES_DIR}/${DATE_TAG}-${dest_rel//\//_}.txt" rc=0
+  local change_file="${CHANGES_DIR}/${TIMESTAMP}-${dest_rel//\//_}.txt" rc=0
   log "rsync: ${src} -> mirror/${dest_rel}"
   rsync "${RSYNC_OPTS[@]}" "${src}" "${dest}" > "${change_file}" 2>&1 || rc=$?
   record_rsync "${src}" "${dest_rel}" "${change_file}" "${rc}"
@@ -124,7 +129,7 @@ rsync_dir() {
   fi
   mkdir -p "${dest}"
   rsync_excludes_for "${home_rel}"
-  local change_file="${CHANGES_DIR}/${DATE_TAG}-${dest_rel//\//_}.txt" rc=0
+  local change_file="${CHANGES_DIR}/${TIMESTAMP}-${dest_rel//\//_}.txt" rc=0
   log "rsync: ${src}/ -> mirror/${dest_rel}/"
   if ((${#RSYNC_DIR_EXCLUDES[@]})); then
     rsync "${RSYNC_OPTS[@]}" "${RSYNC_DIR_EXCLUDES[@]}" "${src}/" "${dest}/" > "${change_file}" 2>&1 || rc=$?
@@ -155,8 +160,9 @@ backup_secrets_bundle() {
     return 0
   fi
   require_cmd tar
-  mkdir -p "${SECRETS_STAGING}" "${MIRROR}/encrypted"
-  local bundle_path="${SECRETS_STAGING}/secrets.tar"
+  local staging="${WORK_TMP}/secrets"
+  mkdir -p "${staging}" "${MIRROR}/encrypted"
+  local bundle_path="${staging}/secrets.tar"
   local latest_path="${MIRROR}/encrypted/secrets-latest.tar.gpg"
   local plaintext_latest="${MIRROR}/encrypted/secrets-latest.tar"
 
@@ -171,52 +177,61 @@ backup_secrets_bundle() {
   done
   if [[ ${#items[@]} -eq 0 ]]; then
     log "No secrets paths found; skipping bundle"
-    rm -rf "${SECRETS_STAGING}"
+    rm -rf "${staging}"
     return 0
   fi
 
   if [[ "${PC_BACKUP_DRY_RUN}" == "1" ]]; then
     log "DRY-RUN: would pack ${#items[@]} secret path(s)"
-    rm -rf "${SECRETS_STAGING}"
+    rm -rf "${staging}"
     return 0
   fi
 
+  local -a tar_excludes=(
+    --exclude='.ssh/agent'
+    --exclude='.ssh/controlmasters'
+    --exclude='.gnupg/S.*'
+    --exclude='.gnupg/*.socket'
+  )
+  local sock
+  for rel in "${items[@]}"; do
+    while IFS= read -r sock; do
+      [[ -n "${sock}" ]] || continue
+      tar_excludes+=(--exclude="${sock#${HOME}/}")
+    done < <(find "${HOME}/${rel}" -type s -print 2>/dev/null || true)
+  done
+
   (
     cd "${HOME}"
-    tar -cf "${bundle_path}" \
-      --exclude='.ssh/agent' \
-      --exclude='.gnupg/S.*' \
-      --exclude='.gnupg/*.socket' \
-      "${items[@]}" 2>>"${LOG_FILE}"
+    COPYFILE_DISABLE=1 tar -cf "${bundle_path}" "${tar_excludes[@]}" "${items[@]}" 2>>"${LOG_FILE}"
   )
 
   if [[ "${PC_BACKUP_ENCRYPT_SECRETS}" == "1" ]]; then
     require_cmd gpg
     if [[ -z "${PC_BACKUP_GPG_PASS:-}" ]]; then
-      rm -rf "${SECRETS_STAGING}"
+      rm -rf "${staging}"
       die "PC_BACKUP_GPG_PASS is unset. Refusing plaintext secrets."
     fi
-    local tmp_gpg="${SECRETS_STAGING}/secrets.tar.gpg"
+    local tmp_gpg="${staging}/secrets.tar.gpg"
     printf '%s' "${PC_BACKUP_GPG_PASS}" | gpg --batch --yes --pinentry-mode loopback \
       --passphrase-fd 0 \
       --symmetric --cipher-algo AES256 \
       --output "${tmp_gpg}" "${bundle_path}"
-    # OneDrive dataless: mv onto existing file often returns EPERM; cp replaces reliably.
     if ! cp -f "${tmp_gpg}" "${latest_path}"; then
-      rm -rf "${SECRETS_STAGING}"
-      die "failed to write ${latest_path} (OneDrive lock/dataless?). Pin mirror/ as Always Keep on this device."
+      rm -rf "${staging}"
+      die "failed to write ${latest_path}"
     fi
     rm -f "${tmp_gpg}" "${plaintext_latest}"
     log "Encrypted secrets -> mirror/encrypted/secrets-latest.tar.gpg"
   else
     if [[ "${PC_BACKUP_ALLOW_PLAINTEXT_SECRETS}" != "1" ]]; then
-      rm -rf "${SECRETS_STAGING}"
+      rm -rf "${staging}"
       die "Plaintext secrets refused. Set PC_BACKUP_ALLOW_PLAINTEXT_SECRETS=1 or enable encryption."
     fi
     cp "${bundle_path}" "${plaintext_latest}"
     log "WARN: stored plaintext secrets (explicit allow)"
   fi
-  rm -rf "${SECRETS_STAGING}"
+  rm -rf "${staging}"
 }
 
 prune_changes() {
@@ -224,6 +239,41 @@ prune_changes() {
   find "${CHANGES_DIR}" -type f -name '*.txt' -mtime +30 -delete 2>/dev/null || true
   find "${LOG_DIR}" -type f -name '*.log' -mtime +30 -delete 2>/dev/null || true
   find "${META_DIR}" -type f -name 'inventory-2*.json' -mtime +30 -delete 2>/dev/null || true
+}
+
+# New directory of files this process creates. Replacing an existing OneDrive
+# inode returns EPERM from LaunchAgents.
+publish_snapshot() {
+  if [[ "${PC_BACKUP_DRY_RUN}" == "1" ]]; then
+    log "DRY-RUN: would publish snapshots/${TIMESTAMP}"
+    return 0
+  fi
+  local incoming="${BACKUP_ROOT}/snapshots/.incoming-${TIMESTAMP}"
+  local dest="${BACKUP_ROOT}/snapshots/${TIMESTAMP}"
+  rm -rf "${incoming}"
+  mkdir -p "${incoming}"
+  if ! cp -R "${MIRROR}/." "${incoming}/"; then
+    die "failed to publish ${incoming}"
+  fi
+  printf '%s\n' "${TIMESTAMP}" > "${incoming}/.complete"
+  if ! mv "${incoming}" "${dest}"; then
+    die "failed to finalize snapshot ${dest}"
+  fi
+  log "Published snapshot -> snapshots/${TIMESTAMP}"
+}
+
+prune_snapshots() {
+  [[ "${PC_BACKUP_DRY_RUN}" == "1" ]] && return 0
+  [[ -d "${BACKUP_ROOT}/snapshots" ]] || return 0
+  local d
+  while IFS= read -r d; do
+    [[ -n "${d}" ]] || continue
+    if rm -rf "${d}"; then
+      log "Pruned $(basename "${d}")"
+    else
+      log "WARN: could not prune ${d}"
+    fi
+  done < <(find "${BACKUP_ROOT}/snapshots" -mindepth 1 -maxdepth 1 -type d \( -name '20*' -o -name '.incoming-*' \) -mtime +14 -print 2>/dev/null || true)
 }
 
 # Emit a bash array assignment with shell-quoted elements.
@@ -239,9 +289,8 @@ emit_quoted_array() {
 }
 
 # Self-contained kit: effective conf + scripts + gpg-pass (not a repo mirror).
-# Staging + cp -f: in-place truncate/mv is flaky on OneDrive dataless files.
 sync_tool_kit() {
-  local kit="${BACKUP_ROOT}/tool"
+  local kit="${MIRROR}/tool"
   if [[ "${PC_BACKUP_DRY_RUN}" == "1" ]]; then
     log "DRY-RUN: would sync tool kit -> ${kit}"
     return 0
@@ -279,7 +328,7 @@ sync_tool_kit() {
     chmod 600 "${staging}/gpg-pass"
     if ! cp -f "${staging}/gpg-pass" "${kit}/gpg-pass"; then
       rm -rf "${staging}"
-      die "failed to write ${kit}/gpg-pass (OneDrive lock/dataless?)"
+      die "failed to write ${kit}/gpg-pass"
     fi
     chmod 600 "${kit}/gpg-pass"
   else
@@ -288,7 +337,7 @@ sync_tool_kit() {
 
   if ! cp -f "${staging}/backup.conf.local" "${kit}/backup.conf.local"; then
     rm -rf "${staging}"
-    die "failed to write ${kit}/backup.conf.local (OneDrive lock/dataless?)"
+    die "failed to write ${kit}/backup.conf.local"
   fi
 
   shopt -s nullglob
@@ -315,7 +364,10 @@ sync_tool_kit() {
 
 main() {
   require_cmd rsync
-  mkdir -p "${LOG_DIR}" "${CHANGES_DIR}" "${MIRROR}"
+  mkdir -p "${LOG_DIR}" "${CHANGES_DIR}" "${MIRROR}" "${BACKUP_ROOT}/snapshots"
+  chmod 700 "$(dirname "${LOCAL_MIRROR}")" "${LOCAL_MIRROR}"
+  WORK_TMP="$(mktemp -d "${TMPDIR:-/tmp}/pc-backup.XXXXXX")"
+  trap 'rm -rf "${WORK_TMP}"' EXIT
 
   log "=== PC backup start ==="
   log "Destination: ${BACKUP_ROOT}"
@@ -325,7 +377,13 @@ main() {
     if [[ "${PC_BACKUP_DRY_RUN}" == "1" ]]; then
       log "DRY-RUN: would refresh Brewfile"
     else
-      "${SCRIPT_DIR}/brewfile-update.sh" "${MIRROR}/brew" >> "${LOG_FILE}" 2>&1 || log "WARN: brewfile-update failed"
+      local brew_log="${WORK_TMP}/brew.log"
+      if "${SCRIPT_DIR}/brewfile-update.sh" "${MIRROR}/brew" >"${brew_log}" 2>&1; then
+        log "Brewfile updated"
+      else
+        log "WARN: brewfile-update failed"
+        cat "${brew_log}" >> "${LOG_FILE}" || true
+      fi
     fi
   fi
 
@@ -342,7 +400,9 @@ main() {
   backup_secrets_bundle
   sync_tool_kit
   write_inventory
+  publish_snapshot
   prune_changes
+  prune_snapshots
 
   if [[ "${RSYNC_FAILURES}" -gt 0 ]]; then
     die "completed with ${RSYNC_FAILURES} rsync failure(s)"
