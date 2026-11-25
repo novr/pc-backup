@@ -59,7 +59,7 @@ LOG_FILE="${LOG_DIR}/${TIMESTAMP}.log"
 RSYNC_FAILURES=0
 WORK_TMP=""
 
-RSYNC_OPTS=(-a --human-readable --itemize-changes)
+RSYNC_OPTS=(-a --human-readable --itemize-changes --exclude='.git/')
 [[ "${PC_BACKUP_DRY_RUN}" == "1" ]] && RSYNC_OPTS+=(--dry-run)
 [[ "${PC_BACKUP_RSYNC_DELETE}" == "1" ]] && RSYNC_OPTS+=(--delete)
 

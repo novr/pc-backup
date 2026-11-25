@@ -89,7 +89,7 @@ if [[ ! -d "${MIRROR}" ]]; then
   exit 1
 fi
 
-RSYNC_OPTS=(-a --human-readable --itemize-changes)
+RSYNC_OPTS=(-a --human-readable --itemize-changes --exclude='.git/')
 [[ "${PC_BACKUP_DRY_RUN}" == "1" ]] && RSYNC_OPTS+=(--dry-run)
 RSYNC_FAILURES=0
 
